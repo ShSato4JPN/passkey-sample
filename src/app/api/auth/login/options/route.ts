@@ -23,7 +23,7 @@ export async function POST() {
   });
 
   const sessionId = await getOrCreateSessionId();
-  saveChallenge(sessionId, options.challenge);
+  await saveChallenge(sessionId, options.challenge);
 
   return NextResponse.json(options);
 }

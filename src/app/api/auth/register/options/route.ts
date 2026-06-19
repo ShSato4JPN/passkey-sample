@@ -40,11 +40,11 @@ export async function POST(request: Request) {
   }
 
   // 既存ユーザーなら再利用し、無ければ作成（同一ユーザーへの複数パスキー登録を許容）
-  const user = getUserByUsername(username) ?? createUser(username);
+  const user = (await getUserByUsername(username)) ?? (await createUser(username));
 
   // 既に登録済みの資格情報は excludeCredentials に渡し、
   // 同じ認証器での二重登録を防ぐ。
-  const existingCredentials = getCredentialsByUserId(user.id);
+  const existingCredentials = await getCredentialsByUserId(user.id);
 
   const options = await generateRegistrationOptions({
     rpName,
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
 
   // challenge はワンタイム。セッションに紐づけて保存し、verify で照合する。
   const sessionId = await getOrCreateSessionId();
-  saveChallenge(sessionId, options.challenge);
+  await saveChallenge(sessionId, options.challenge);
 
   return NextResponse.json(options);
 }

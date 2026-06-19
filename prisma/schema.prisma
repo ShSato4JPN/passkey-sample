@@ -1,0 +1,51 @@
+// Passkey サンプル（Prisma + PostgreSQL / Vercel Marketplace の Neon 等）
+//
+// Vercel では DATABASE_URL を Marketplace 連携（Neon Postgres など）で自動注入できる。
+// ローカルは .env の DATABASE_URL を使う。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// ユーザー。id はユーザーハンドルとして使う推測不能なランダム値。
+model User {
+  id          String       @id @default(uuid())
+  username    String       @unique
+  createdAt   DateTime     @default(now())
+  credentials Credential[]
+}
+
+/// パスキー（公開鍵資格情報）。1ユーザーが複数端末分を持てる。
+model Credential {
+  /// credentialID（Base64URL）。グローバルに一意なので主キーにする。
+  id         String   @id
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 公開鍵（COSE 形式のバイト列）。Postgres では bytea。
+  publicKey  Bytes
+  /// 署名カウンター。巻き戻り検知に使う。uint32 に収まるが余裕を持って BigInt。
+  counter    BigInt
+  /// 接続手段（internal, hybrid, usb, ...）。Postgres の text[]。
+  transports String[]
+  /// single-device / multi-device(同期パスキー)
+  deviceType String
+  /// クラウド同期済みか
+  backedUp   Boolean
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// WebAuthn フロー中の一時 challenge。sessionId に紐づけてワンタイム保存。
+/// expiresAt 超過は無効。定期削除 or TTL ジョブで掃除するのが理想。
+model Challenge {
+  sessionId String   @id
+  challenge String
+  expiresAt DateTime
+}

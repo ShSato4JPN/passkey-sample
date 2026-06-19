@@ -6,7 +6,7 @@ import { getUserById } from "@/lib/store";
 
 export async function GET() {
   const userId = await getCurrentUserId();
-  const user = userId ? getUserById(userId) : undefined;
+  const user = userId ? await getUserById(userId) : undefined;
 
   if (!user) {
     return NextResponse.json({ authenticated: false });

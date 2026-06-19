@@ -1,111 +1,139 @@
 /**
- * ===== サンプル用のインメモリ・データストア =====
+ * ===== データストア（Prisma + PostgreSQL 版）=====
  *
- * ⚠️ 本番では絶対にこのまま使わないこと。
- *    プロセス再起動で消える / スケールアウトで共有されない。
- *    実運用では PostgreSQL / DynamoDB / Redis などの永続ストアに置き換える。
+ * インメモリ版と同じ関数シグネチャ（ただし async）を保ち、中身だけ Prisma に
+ * 差し替えた実装。API ルート側はこの層越しに DB を触る。
  *
- * 保存すべきデータモデル（テーブル設計の参考）:
- *   users        : id, username, ...
- *   credentials  : id(credentialID), userId, publicKey, counter, transports, ...
- *
- * このファイルでは「何を・どう持つか」を型で示すことを目的にしている。
+ * 設計メモ:
+ *  - publicKey は DB では bytea(Bytes)。Prisma からは Buffer で返るため、
+ *    SimpleWebAuthn が期待する Uint8Array に変換して返す。
+ *  - counter は DB では BigInt。アプリ内では number(uint32) で扱う。
+ *  - challenge はワンタイム + TTL。consumeChallenge で取得即削除する。
  */
 
 import type {
   AuthenticatorTransportFuture,
   CredentialDeviceType,
 } from "@simplewebauthn/server";
+import { prisma } from "@/lib/prisma";
 
 export interface StoredUser {
-  /** 内部ユーザーID（ユーザーハンドルとして使う。推測不能なランダム値） */
   id: string;
-  /** ログイン名（メールアドレス等）。表示・突合用 */
   username: string;
 }
 
 export interface StoredCredential {
-  /** 資格情報ID（Base64URL 文字列）。主キー相当でグローバルに一意 */
+  /** 資格情報ID（Base64URL 文字列）。主キー */
   id: string;
-  /** この資格情報を所有するユーザーID */
   userId: string;
-  /** 公開鍵（COSE 形式のバイト列）。署名検証に使う */
+  /** 公開鍵（COSE 形式のバイト列） */
   publicKey: Uint8Array<ArrayBuffer>;
-  /**
-   * 署名カウンター。認証成功のたびに認証器が増やす値。
-   * サーバーは保存値より大きいことを確認し、保存値を更新する。
-   * 巻き戻り（counter <= 保存値）はクローン認証器の兆候として検知できる。
-   */
+  /** 署名カウンター */
   counter: number;
-  /** 認証器の接続手段（usb, ble, nfc, internal, hybrid 等） */
   transports?: AuthenticatorTransportFuture[];
-  /** single-device か multi-device(同期パスキー) か */
   deviceType: CredentialDeviceType;
-  /** 認証器がバックアップ済み（クラウド同期済み）か */
   backedUp: boolean;
 }
-
-/** challenge は短命なので有効期限付きで保持する */
-interface StoredChallenge {
-  challenge: string;
-  expiresAt: number;
-}
-
-const users = new Map<string, StoredUser>();
-const credentials = new Map<string, StoredCredential>();
-/** セッションID -> 進行中の challenge */
-const challenges = new Map<string, StoredChallenge>();
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5分
 
 // ---- Users ----
 
-export function getUserByUsername(username: string): StoredUser | undefined {
-  for (const user of users.values()) {
-    if (user.username === username) return user;
-  }
-  return undefined;
+export async function getUserByUsername(
+  username: string,
+): Promise<StoredUser | undefined> {
+  const user = await prisma.user.findUnique({ where: { username } });
+  return user ? { id: user.id, username: user.username } : undefined;
 }
 
-export function getUserById(id: string): StoredUser | undefined {
-  return users.get(id);
+export async function getUserById(id: string): Promise<StoredUser | undefined> {
+  const user = await prisma.user.findUnique({ where: { id } });
+  return user ? { id: user.id, username: user.username } : undefined;
 }
 
-export function createUser(username: string): StoredUser {
-  const user: StoredUser = {
-    // ユーザーハンドルは個人情報を含めず、推測不能にする（WebAuthn 仕様の推奨）
-    id: crypto.randomUUID(),
-    username,
-  };
-  users.set(user.id, user);
-  return user;
+export async function createUser(username: string): Promise<StoredUser> {
+  // id は @default(uuid()) で DB 側が採番（推測不能なユーザーハンドル）
+  const user = await prisma.user.create({ data: { username } });
+  return { id: user.id, username: user.username };
 }
 
 // ---- Credentials ----
 
-export function getCredentialsByUserId(userId: string): StoredCredential[] {
-  return [...credentials.values()].filter((c) => c.userId === userId);
+export async function getCredentialsByUserId(
+  userId: string,
+): Promise<StoredCredential[]> {
+  const rows = await prisma.credential.findMany({ where: { userId } });
+  return rows.map(toStoredCredential);
 }
 
-export function getCredentialById(id: string): StoredCredential | undefined {
-  return credentials.get(id);
+export async function getCredentialById(
+  id: string,
+): Promise<StoredCredential | undefined> {
+  const row = await prisma.credential.findUnique({ where: { id } });
+  return row ? toStoredCredential(row) : undefined;
 }
 
-export function saveCredential(credential: StoredCredential): void {
-  credentials.set(credential.id, credential);
+export async function saveCredential(
+  credential: StoredCredential,
+): Promise<void> {
+  await prisma.credential.create({
+    data: {
+      id: credential.id,
+      userId: credential.userId,
+      // Uint8Array -> Buffer(bytea)
+      publicKey: Buffer.from(credential.publicKey),
+      counter: BigInt(credential.counter),
+      transports: credential.transports ?? [],
+      deviceType: credential.deviceType,
+      backedUp: credential.backedUp,
+    },
+  });
 }
 
-export function updateCredentialCounter(id: string, newCounter: number): void {
-  const credential = credentials.get(id);
-  if (credential) credential.counter = newCounter;
+export async function updateCredentialCounter(
+  id: string,
+  newCounter: number,
+): Promise<void> {
+  await prisma.credential.update({
+    where: { id },
+    data: { counter: BigInt(newCounter) },
+  });
+}
+
+/** Prisma の行 -> アプリ内の型へ変換 */
+function toStoredCredential(row: {
+  id: string;
+  userId: string;
+  publicKey: Buffer | Uint8Array;
+  counter: bigint;
+  transports: string[];
+  deviceType: string;
+  backedUp: boolean;
+}): StoredCredential {
+  return {
+    id: row.id,
+    userId: row.userId,
+    // bytea(Buffer) -> Uint8Array<ArrayBuffer>
+    publicKey: Uint8Array.from(row.publicKey),
+    counter: Number(row.counter),
+    transports: row.transports as AuthenticatorTransportFuture[],
+    deviceType: row.deviceType as CredentialDeviceType,
+    backedUp: row.backedUp,
+  };
 }
 
 // ---- Challenges ----
 
-export function saveChallenge(sessionId: string, challenge: string): void {
-  challenges.set(sessionId, {
-    challenge,
-    expiresAt: Date.now() + CHALLENGE_TTL_MS,
+export async function saveChallenge(
+  sessionId: string,
+  challenge: string,
+): Promise<void> {
+  const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS);
+  // 同一セッションの古い challenge は上書き
+  await prisma.challenge.upsert({
+    where: { sessionId },
+    create: { sessionId, challenge, expiresAt },
+    update: { challenge, expiresAt },
   });
 }
 
@@ -113,10 +141,13 @@ export function saveChallenge(sessionId: string, challenge: string): void {
  * challenge を取得し、即座に削除する（ワンタイム使用を強制）。
  * 期限切れは無効として扱う。
  */
-export function consumeChallenge(sessionId: string): string | undefined {
-  const entry = challenges.get(sessionId);
-  challenges.delete(sessionId);
+export async function consumeChallenge(
+  sessionId: string,
+): Promise<string | undefined> {
+  const entry = await prisma.challenge
+    .delete({ where: { sessionId } })
+    .catch(() => null); // 無ければ null
   if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) return undefined;
+  if (Date.now() > entry.expiresAt.getTime()) return undefined;
   return entry.challenge;
 }

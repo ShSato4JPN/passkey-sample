@@ -11,3 +11,7 @@ yarn-debug.log*
 yarn-error.log*
 next-env.d.ts
 *.tsbuildinfo
+
+# Prisma の生成物
+/src/generated
+/node_modules/.prisma

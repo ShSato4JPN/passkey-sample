@@ -43,13 +43,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const user = getUserByUsername(username);
+  const user = await getUserByUsername(username);
   if (!user) {
     return NextResponse.json({ error: "ユーザーが存在しません" }, { status: 400 });
   }
 
   const sessionId = await getSessionId();
-  const expectedChallenge = sessionId ? consumeChallenge(sessionId) : undefined;
+  const expectedChallenge = sessionId
+    ? await consumeChallenge(sessionId)
+    : undefined;
   if (!expectedChallenge) {
     return NextResponse.json(
       { error: "challenge が無効または期限切れです。やり直してください。" },
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
   const { credential, credentialDeviceType, credentialBackedUp } =
     verification.registrationInfo;
 
-  saveCredential({
+  await saveCredential({
     id: credential.id,
     userId: user.id,
     publicKey: credential.publicKey,

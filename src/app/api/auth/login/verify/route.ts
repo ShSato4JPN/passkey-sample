@@ -37,14 +37,12 @@ export async function POST(request: Request) {
     );
   }
 
-  console.log(response);
-
   if (!response?.id) {
     return NextResponse.json({ error: "response が不正です" }, { status: 400 });
   }
 
   // 提示された資格情報IDからサーバー保存分を特定
-  const credential = getCredentialById(response.id);
+  const credential = await getCredentialById(response.id);
   if (!credential) {
     return NextResponse.json(
       { error: "登録されていない資格情報です" },
@@ -53,7 +51,9 @@ export async function POST(request: Request) {
   }
 
   const sessionId = await getSessionId();
-  const expectedChallenge = sessionId ? consumeChallenge(sessionId) : undefined;
+  const expectedChallenge = sessionId
+    ? await consumeChallenge(sessionId)
+    : undefined;
   if (!expectedChallenge) {
     return NextResponse.json(
       { error: "challenge が無効または期限切れです。やり直してください。" },
@@ -94,12 +94,12 @@ export async function POST(request: Request) {
   }
 
   // counter を更新（巻き戻り検知のため必須）
-  updateCredentialCounter(
+  await updateCredentialCounter(
     credential.id,
     verification.authenticationInfo.newCounter,
   );
 
-  const user = getUserById(credential.userId);
+  const user = await getUserById(credential.userId);
   if (!user) {
     return NextResponse.json(
       { error: "ユーザーが見つかりません" },

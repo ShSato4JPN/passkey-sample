@@ -4,17 +4,25 @@
 [SimpleWebAuthn](https://simplewebauthn.dev/) を使い、登録・認証の一連の流れを
 セキュリティのベストプラクティスに沿って実装しています。
 
+> **このブランチ (`feat/prisma-vercel-db`) は永続化に Prisma + PostgreSQL を使う版です。**
+> インメモリ版は `main` ブランチにあります。
+
 ## 技術スタック
 
 - **Next.js (App Router)** — フロント(React)とバックエンド(API Routes)を1リポジトリで
 - **TypeScript** — 型安全
 - **@simplewebauthn/server** / **@simplewebauthn/browser** — WebAuthn の定番ライブラリ
+- **Prisma + PostgreSQL** — 永続化（Vercel Marketplace の Neon Postgres 等を想定）
 
 ## セットアップ
 
 ```bash
-npm install
-cp .env.example .env   # 必要なら値を調整
+npm install                 # postinstall で prisma generate が走る
+cp .env.example .env        # DATABASE_URL / RP 設定を記入
+
+# DB スキーマを作成（初回マイグレーション）
+npm run db:migrate          # = prisma migrate dev
+
 npm run dev
 ```
 
@@ -22,6 +30,32 @@ npm run dev
 
 > パスキーには **HTTPS または localhost** が必須です。`localhost` での開発はそのまま動きます。
 > 別ホスト名や実機テストでは HTTPS を用意し、`.env` の `RP_ID` / `EXPECTED_ORIGIN` を合わせてください。
+
+### Vercel の DB を使う場合（Neon Postgres）
+
+Vercel では Postgres を **Marketplace 連携**で利用します（旧 Vercel Postgres は廃止）。
+
+1. Vercel ダッシュボード → Storage → Marketplace から **Neon** 等を追加してプロジェクトに連携
+2. `DATABASE_URL` が自動でプロジェクトの環境変数に登録される
+3. ローカルへ取得: `vercel env pull .env`
+4. スキーマ適用: 本番は `npm run db:deploy`（= `prisma migrate deploy`）
+
+> Neon などプーリング有りの接続では、マイグレーション用に直結 URL (`DIRECT_URL`) を
+> 併用するのが定石です（`.env.example` 参照）。
+
+## データモデル (Prisma)
+
+`prisma/schema.prisma` に定義:
+
+| モデル | 役割 |
+| --- | --- |
+| `User` | ユーザー。`id` は推測不能なユーザーハンドル |
+| `Credential` | パスキー。公開鍵(`Bytes`/bytea)・`counter`・`transports` を保持 |
+| `Challenge` | フロー中の一時 challenge。`sessionId` に紐づけワンタイム + TTL |
+
+DB アクセスは `src/lib/store.ts`（Prisma 実装）に集約し、API ルートは
+その関数越しに DB を触ります。Prisma クライアントは `src/lib/prisma.ts` で
+`globalThis` singleton 化し、dev の HMR によるコネクション枯渇を防いでいます。
 
 ## ディレクトリ構成
 
