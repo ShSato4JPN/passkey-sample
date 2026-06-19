@@ -1,0 +1,30 @@
+# ローカル開発用の PostgreSQL。
+#   起動: docker compose up -d
+#   停止: docker compose down
+#   データも消す: docker compose down -v
+#
+# .env の DATABASE_URL をこのコンテナに合わせる:
+#   DATABASE_URL="postgresql://postgres:postgres@localhost:5432/passkey?schema=public"
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: passkey-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: passkey
+    ports:
+      - "5432:5432"
+    volumes:
+      - passkey-pgdata:/var/lib/postgresql/data
+    # DB が受付可能になるまで待てるようヘルスチェックを付与
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d passkey"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  passkey-pgdata:

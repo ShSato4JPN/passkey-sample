@@ -20,11 +20,17 @@
 npm install                 # postinstall で prisma generate が走る
 cp .env.example .env        # DATABASE_URL / RP 設定を記入
 
+# ローカル DB を Docker で起動（既存の Postgres があれば不要）
+docker compose up -d        # localhost:5432 に postgres を起動
+
 # DB スキーマを作成（初回マイグレーション）
 npm run db:migrate          # = prisma migrate dev
 
 npm run dev
 ```
+
+`.env.example` の `DATABASE_URL` はこの `docker-compose.yml` の設定に
+そのまま一致しているので、Docker を使う場合は編集不要です。
 
 ブラウザで http://localhost:3000 を開きます。
 
