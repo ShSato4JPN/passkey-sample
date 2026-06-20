@@ -37,6 +37,34 @@ npm run dev
 > パスキーには **HTTPS または localhost** が必須です。`localhost` での開発はそのまま動きます。
 > 別ホスト名や実機テストでは HTTPS を用意し、`.env` の `RP_ID` / `EXPECTED_ORIGIN` を合わせてください。
 
+### 期限切れ challenge の定期掃除（Cron）
+
+中断された ceremony（options のみで verify に来なかった）で残る期限切れ
+challenge を、定期削除するための仕組み。**ローカルと本番で同じ API ルート**
+（`/api/cron/cleanup-challenges`、`CRON_SECRET` で保護）を使う。
+
+**ローカル（Docker cron サーバー）:**
+
+```bash
+# db と一緒に cron コンテナも起動（busybox crond が定期的に掃除エンドポイントを叩く）
+docker compose up -d            # db + cron
+docker logs -f passkey-cron     # cron の動作ログ
+```
+
+- 既定は5分間隔。`.env` の `CRON_SCHEDULE`（例 `"* * * * *"`）で変更可。
+- アプリ(`npm run dev`)が起動している必要がある（cron はホストの :3000 を叩く）。
+- 手動実行: `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/cleanup-challenges`
+
+**本番（Vercel Cron）:**
+
+`vercel.json` の `crons` で同じルートを叩く（既定: 毎時）。
+`CRON_SECRET` を環境変数に設定すると、Vercel Cron が自動で
+`Authorization: Bearer <CRON_SECRET>` を付与する。
+
+```json
+{ "crons": [{ "path": "/api/cron/cleanup-challenges", "schedule": "0 * * * *" }] }
+```
+
 ### Vercel の DB を使う場合（Neon Postgres）
 
 Vercel では Postgres を **Marketplace 連携**で利用します（旧 Vercel Postgres は廃止）。

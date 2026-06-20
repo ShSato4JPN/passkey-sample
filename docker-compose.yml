@@ -26,5 +26,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # 期限切れ challenge を定期削除する cron サーバー（busybox crond）。
+  # Next.js アプリ(ホストの localhost:3000)の掃除用エンドポイントを叩く。
+  # アプリが起動している必要がある(npm run dev)。
+  cron:
+    image: alpine:3.20
+    container_name: passkey-cron
+    restart: unless-stopped
+    environment:
+      # 掃除エンドポイントの認証用。.env の CRON_SECRET と一致させる。
+      CRON_SECRET: ${CRON_SECRET:-dev-cron-secret}
+      # ホスト上で動く Next.js を指す。Linux でも届くよう host-gateway を併用。
+      TARGET_URL: ${CRON_TARGET_URL:-http://host.docker.internal:3000/api/cron/cleanup-challenges}
+      # 既定は5分ごと。短くしたいときは .env の CRON_SCHEDULE で上書き。
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-*/5 * * * *}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./docker/cron/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["sh", "/entrypoint.sh"]
+
 volumes:
   passkey-pgdata:
